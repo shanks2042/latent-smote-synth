@@ -13,9 +13,9 @@ serve(async (req) => {
   try {
     const { images, description, parameters } = await req.json();
 
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-    if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY is not configured");
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY is not configured");
     }
 
     if (!images || images.length === 0) {
@@ -24,7 +24,6 @@ serve(async (req) => {
 
     const generatedImages: { id: string; url: string; class_label: string; quality_score: number }[] = [];
 
-    // Generate synthetic variations for each uploaded image
     for (let i = 0; i < images.length; i++) {
       const imageBase64 = images[i];
 
@@ -35,64 +34,73 @@ The variation should:
 - Have subtle but meaningful differences (lighting, angle, texture variations)
 - Look like a real sample, not an obvious copy
 - Preserve key features that define the class
+- Detect and preserve the dominant colors from the original image
+- Apply slight distortion effects (warping, noise, color shifts) to create diversity
 ${parameters?.decoder_type === 'diffusion' ? '- Apply diffusion-style noise patterns' : ''}
 ${parameters?.decoder_type === 'gan' ? '- Apply GAN-style generation artifacts' : ''}
-Generate one synthetic image variation.`;
+Generate one synthetic image variation that looks slightly distorted but retains the original color palette.`;
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-        {
+      try {
+        const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({
-            contents: [
+            model: "google/gemini-2.5-flash-image",
+            messages: [
               {
-                parts: [
-                  { text: prompt },
+                role: "user",
+                content: [
+                  { type: "text", text: prompt },
                   {
-                    inlineData: {
-                      mimeType: "image/jpeg",
-                      data: imageBase64.split(",").pop() || imageBase64,
-                    },
+                    type: "image_url",
+                    image_url: { url: imageBase64 },
                   },
                 ],
               },
             ],
-            generationConfig: {
-              responseModalities: ["IMAGE", "TEXT"],
-            },
+            modalities: ["image", "text"],
           }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`AI gateway error for image ${i}:`, response.status, errorText);
+          if (response.status === 429) {
+            throw new Error("Rate limit exceeded. Please try again later.");
+          }
+          if (response.status === 402) {
+            throw new Error("Usage limit reached. Please add credits in Settings -> Workspace -> Usage.");
+          }
+          continue;
         }
-      );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`Gemini API error for image ${i}:`, response.status, errorText);
-        // If one image fails, continue with others
-        continue;
-      }
+        const data = await response.json();
+        const messageImages = data.choices?.[0]?.message?.images;
 
-      const data = await response.json();
-
-      // Extract generated image from response
-      const candidates = data.candidates || [];
-      for (const candidate of candidates) {
-        const parts = candidate.content?.parts || [];
-        for (const part of parts) {
-          if (part.inlineData) {
+        if (messageImages && messageImages.length > 0) {
+          for (const img of messageImages) {
             generatedImages.push({
               id: `gen-${i}-${Date.now()}-${generatedImages.length}`,
-              url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
-              class_label: `Synthetic ${i}`,
+              url: img.image_url?.url || img.url,
+              class_label: `Synthetic ${i + 1}`,
               quality_score: 0.7 + Math.random() * 0.25,
             });
           }
         }
+      } catch (innerError) {
+        if (innerError instanceof Error && (innerError.message.includes("Rate limit") || innerError.message.includes("Usage limit"))) {
+          throw innerError;
+        }
+        console.error(`Error processing image ${i}:`, innerError);
+        continue;
       }
     }
 
     if (generatedImages.length === 0) {
-      throw new Error("No images were generated. The API may not support image generation with your current key.");
+      throw new Error("No images were generated. Please try again.");
     }
 
     return new Response(
