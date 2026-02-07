@@ -115,7 +115,20 @@ export const GeneratedResults: React.FC<GeneratedResultsProps> = ({
               <img
                 src={image.url}
                 alt={`Generated ${index + 1}`}
-                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                className="w-full h-full object-cover transition-all duration-300 group-hover:scale-105"
+                style={{
+                  filter: 'blur(0.6px) contrast(1.05) saturate(1.1)',
+                  imageRendering: 'auto',
+                }}
+              />
+              {/* Gaussian smoothness overlay */}
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  background: 'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.08) 100%)',
+                  backdropFilter: 'blur(0.3px)',
+                  mixBlendMode: 'multiply',
+                }}
               />
               
               <div className="absolute inset-0 bg-gradient-to-t from-background/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
