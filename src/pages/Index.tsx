@@ -36,6 +36,15 @@ const Index = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
 
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleGenerate = async () => {
     if (files.length === 0) {
       toast({
@@ -48,38 +57,54 @@ const Index = () => {
 
     setIsGenerating(true);
     
-    // Simulate API call - this would connect to Gemini API via backend
     toast({
       title: "Generation Started",
-      description: "Processing images through the SMOTE pipeline...",
+      description: "Processing images through the Gemini API pipeline...",
     });
 
-    // Simulate generation delay
-    setTimeout(() => {
-      // Create mock generated images for demo
-      const mockImages: GeneratedImage[] = files.map((file, i) => ({
-        id: `gen-${i}-${Date.now()}`,
-        url: URL.createObjectURL(file),
-        class_label: `Class ${i % 3}`,
-        quality_score: 0.75 + Math.random() * 0.2,
-      }));
+    try {
+      // Convert files to base64
+      const imagePromises = files.map(fileToBase64);
+      const base64Images = await Promise.all(imagePromises);
 
-      // Add a few more synthetic variations
-      const extraImages: GeneratedImage[] = Array.from({ length: 4 }, (_, i) => ({
-        id: `synth-${i}-${Date.now()}`,
-        url: files.length > 0 ? URL.createObjectURL(files[i % files.length]) : '',
-        class_label: `Synthetic ${i}`,
-        quality_score: 0.7 + Math.random() * 0.25,
-      }));
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-images`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          },
+          body: JSON.stringify({
+            images: base64Images,
+            description,
+            parameters,
+          }),
+        }
+      );
 
-      setGeneratedImages([...mockImages, ...extraImages]);
-      setIsGenerating(false);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to generate images");
+      }
+
+      const data = await response.json();
+      setGeneratedImages(data.images);
 
       toast({
         title: "Generation Complete",
-        description: `Successfully generated ${mockImages.length + extraImages.length} synthetic images.`,
+        description: `Successfully generated ${data.images.length} synthetic images.`,
       });
-    }, 3000);
+    } catch (error) {
+      console.error("Generation error:", error);
+      toast({
+        title: "Generation Failed",
+        description: error instanceof Error ? error.message : "An error occurred during generation.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   return (
@@ -213,12 +238,6 @@ const Index = () => {
               {/* Results Section */}
               <GeneratedResults
                 images={generatedImages}
-                metrics={generatedImages.length > 0 ? {
-                  fid_score: 23.5,
-                  lpips: 0.12,
-                  ssim: 0.87,
-                  diversity: 0.82,
-                } : undefined}
                 isLoading={isGenerating}
               />
             </div>
